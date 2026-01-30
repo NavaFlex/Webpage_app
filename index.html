@@ -1,14 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
 <title>SENSE Dashboard</title>
+
 <style>
   body {
     margin: 0;
     background: black;
     color: white;
-    font-family: Arial;
+    font-family: Arial, sans-serif;
     user-select: none;
   }
   button {
@@ -17,6 +18,7 @@
     left: 10px;
     padding: 10px 18px;
     font-size: 14px;
+    cursor: pointer;
   }
 </style>
 </head>
@@ -24,14 +26,18 @@
 <body>
 
 <button onclick="connectBLE()">Connect BLE</button>
-
 <canvas id="c" width="1100" height="800"></canvas>
 
 <script>
+/* ================= BLE UUIDs ================= */
+const SERVICE_UUID = "1234";
+const CHAR_UUID    = "4567";
+
+/* ================= CANVAS ================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-// ---------------- DATA ----------------
+/* ================= DATA ================= */
 let adc = new Array(8).fill(0);
 let imu = new Array(6).fill(0);
 let mic = 0;
@@ -40,42 +46,58 @@ let motorOn = false;
 let flags = 0;
 let pkt = 0;
 
-// IR buffer
+/* IR waveform */
 let irBuffer = new Array(400).fill(0);
 let irIndex = 0;
 
-// Motor button
+/* Motor button */
 const motorBtn = { x: 850, y: 650, w: 200, h: 40 };
 let motorHighlight = false;
 let motorHighlightUntil = 0;
 
-// ---------------- BLE ----------------
+/* ================= BLE ================= */
 let device, characteristic;
 
 async function connectBLE() {
-  device = await navigator.bluetooth.requestDevice({
-    filters: [{ name: "SENSE-SENDER" }],
-    optionalServices: ["4567"]
-  });
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: "SENSE-SENDER" }],
+      optionalServices: [SERVICE_UUID]
+    });
 
-  const server = await device.gatt.connect();
-  const service = await server.getPrimaryService("4567");
-  characteristic = await service.getCharacteristic("4567");
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    characteristic = await service.getCharacteristic(CHAR_UUID);
 
-  await characteristic.startNotifications();
-  characteristic.addEventListener("characteristicvaluechanged", onPacket);
+    await characteristic.startNotifications();
+    characteristic.addEventListener(
+      "characteristicvaluechanged",
+      onPacket
+    );
+
+    console.log("✅ BLE Connected");
+  } catch (e) {
+    console.error(e);
+    alert("BLE connection failed. Check console.");
+  }
 }
 
-// ---------------- BLE PACKET ----------------
+/* ================= PACKET PARSE ================= */
 function onPacket(e) {
   const v = new Uint8Array(e.target.value.buffer);
   if (v.length !== 20) return;
 
+  // ADC
   for (let i = 0; i < 8; i++) adc[i] = v[i];
 
-  // IMU not in BLE → keep zeros or extend later
+  // IMU int8
+  for (let i = 0; i < 6; i++) {
+    let x = v[8 + i];
+    if (x > 127) x -= 256;
+    imu[i] = x;
+  }
 
-  mic = v[14] ?? mic;
+  mic = v[14];
   ir = (v[15] << 8) | v[16];
   motorOn = v[17] === 1;
   flags = v[18];
@@ -85,7 +107,7 @@ function onPacket(e) {
   irIndex = (irIndex + 1) % irBuffer.length;
 }
 
-// ---------------- DRAW LOOP ----------------
+/* ================= DRAW LOOP ================= */
 function draw() {
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, 1100, 800);
@@ -102,7 +124,7 @@ function draw() {
 }
 requestAnimationFrame(draw);
 
-// ---------------- DRAW FUNCTIONS ----------------
+/* ================= DRAW FUNCTIONS ================= */
 function drawADC(x, y) {
   ctx.fillStyle = "white";
   ctx.font = "20px Arial";
@@ -110,7 +132,6 @@ function drawADC(x, y) {
 
   for (let i = 0; i < 8; i++) {
     let h = adc[i] * 2.2;
-
     ctx.fillStyle = "rgb(0,180,255)";
     ctx.fillRect(x + i * 110, y + 220 - h, 70, h);
 
@@ -128,14 +149,14 @@ function drawIMU(x, y) {
 
   for (let i = 0; i < 6; i++) {
     let v = imu[i];
-    let h = (i < 3) ? v * 25 : v * 0.2;
+    let h = (i < 3) ? v * 1.2 : v * 0.4;
 
     ctx.fillStyle = "rgb(255,120,0)";
     ctx.fillRect(x + i * 45, y + 200, 35, -h);
 
     ctx.fillStyle = "white";
     ctx.font = "14px Arial";
-    ctx.fillText(v.toFixed(3), x + i * 45, y + 230);
+    ctx.fillText(v.toFixed(0), x + i * 45, y + 230);
   }
 }
 
@@ -192,21 +213,23 @@ function drawMotorButton() {
     motorHighlight = false;
 
   ctx.fillStyle = motorHighlight ? "rgb(80,200,80)" : "rgb(40,120,40)";
-  ctx.fillRect(motorBtn.x, motorBtn.y, motorBtn.w, motorBtn.h, 6);
+  ctx.fillRect(motorBtn.x, motorBtn.y, motorBtn.w, motorBtn.h);
 
   ctx.fillStyle = "white";
   ctx.font = "16px Arial";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("PULSE MOTOR",
+  ctx.fillText(
+    "PULSE MOTOR",
     motorBtn.x + motorBtn.w / 2,
-    motorBtn.y + motorBtn.h / 2);
+    motorBtn.y + motorBtn.h / 2
+  );
 
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
 }
 
-// ---------------- MOUSE ----------------
+/* ================= MOUSE ================= */
 canvas.addEventListener("mousedown", e => {
   const r = canvas.getBoundingClientRect();
   const x = e.clientX - r.left;
@@ -218,11 +241,11 @@ canvas.addEventListener("mousedown", e => {
     motorHighlight = true;
     motorHighlightUntil = performance.now() + 150;
 
-    // TODO: BLE write "M1" characteristic here
-    console.log("Motor pulse requested");
+    console.log("Motor button pressed (BLE write can be added)");
   }
 });
 </script>
 
 </body>
 </html>
+
