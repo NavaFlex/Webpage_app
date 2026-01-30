@@ -29,9 +29,11 @@
 <canvas id="c" width="1100" height="800"></canvas>
 
 <script>
-/* ================= BLE UUIDs ================= */
-const SERVICE_UUID = "1234";
-const CHAR_UUID    = "4567";
+/* ============================================================
+   BLE UUIDs — MUST BE 128-BIT (ArduinoBLE expands short UUIDs)
+   ============================================================ */
+const SERVICE_UUID = "00001234-0000-1000-8000-00805f9b34fb";
+const CHAR_UUID    = "00004567-0000-1000-8000-00805f9b34fb";
 
 /* ================= CANVAS ================= */
 const canvas = document.getElementById("c");
@@ -46,7 +48,7 @@ let motorOn = false;
 let flags = 0;
 let pkt = 0;
 
-/* IR waveform */
+/* IR waveform buffer */
 let irBuffer = new Array(400).fill(0);
 let irIndex = 0;
 
@@ -75,9 +77,9 @@ async function connectBLE() {
       onPacket
     );
 
-    console.log("✅ BLE Connected");
+    console.log("✅ BLE connected");
   } catch (e) {
-    console.error(e);
+    console.error("BLE ERROR:", e);
     alert("BLE connection failed. Check console.");
   }
 }
@@ -90,7 +92,7 @@ function onPacket(e) {
   // ADC
   for (let i = 0; i < 8; i++) adc[i] = v[i];
 
-  // IMU int8
+  // IMU int8 -> signed
   for (let i = 0; i < 6; i++) {
     let x = v[8 + i];
     if (x > 127) x -= 256;
@@ -137,7 +139,7 @@ function drawADC(x, y) {
 
     ctx.fillStyle = "white";
     ctx.font = "14px Arial";
-    ctx.fillText(adc[i].toFixed(1), x + i * 110, y + 240);
+    ctx.fillText(adc[i].toFixed(0), x + i * 110, y + 240);
   }
 }
 
@@ -241,11 +243,10 @@ canvas.addEventListener("mousedown", e => {
     motorHighlight = true;
     motorHighlightUntil = performance.now() + 150;
 
-    console.log("Motor button pressed (BLE write can be added)");
+    console.log("Motor button pressed (BLE write can be added later)");
   }
 });
 </script>
 
 </body>
 </html>
-
