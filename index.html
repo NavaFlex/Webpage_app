@@ -19,6 +19,7 @@
     padding: 10px 18px;
     font-size: 14px;
     cursor: pointer;
+    z-index: 10;
   }
 </style>
 </head>
@@ -30,10 +31,11 @@
 
 <script>
 /* ============================================================
-   BLE UUIDs — MUST BE 128-BIT (ArduinoBLE expands short UUIDs)
+   BLE UUIDs (128-bit, REQUIRED)
    ============================================================ */
 const SERVICE_UUID = "00001234-0000-1000-8000-00805f9b34fb";
-const CHAR_UUID    = "00004567-0000-1000-8000-00805f9b34fb";
+const DATA_UUID    = "00004567-0000-1000-8000-00805f9b34fb"; // notify
+const CMD_UUID     = "00009999-0000-1000-8000-00805f9b34fb"; // write
 
 /* ================= CANVAS ================= */
 const canvas = document.getElementById("c");
@@ -48,7 +50,7 @@ let motorOn = false;
 let flags = 0;
 let pkt = 0;
 
-/* IR waveform buffer */
+/* IR waveform */
 let irBuffer = new Array(400).fill(0);
 let irIndex = 0;
 
@@ -58,29 +60,44 @@ let motorHighlight = false;
 let motorHighlightUntil = 0;
 
 /* ================= BLE ================= */
-let device, characteristic;
+let device, dataChar, cmdChar;
 
+/* ---------- ANDROID-SAFE BLE CONNECT ---------- */
 async function connectBLE() {
   try {
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ name: "SENSE-SENDER" }],
+      filters: [{ services: [SERVICE_UUID] }],
       optionalServices: [SERVICE_UUID]
     });
 
     const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    characteristic = await service.getCharacteristic(CHAR_UUID);
 
-    await characteristic.startNotifications();
-    characteristic.addEventListener(
+    // Android BLE pacing (IMPORTANT)
+    await new Promise(r => setTimeout(r, 300));
+
+    const service = await server.getPrimaryService(SERVICE_UUID);
+
+    dataChar = await service.getCharacteristic(DATA_UUID);
+    cmdChar  = await service.getCharacteristic(CMD_UUID);
+
+    await new Promise(r => setTimeout(r, 200));
+    await dataChar.startNotifications();
+
+    dataChar.addEventListener(
       "characteristicvaluechanged",
       onPacket
     );
 
-    console.log("✅ BLE connected");
+    console.log("✅ BLE connected (notify + write ready)");
   } catch (e) {
     console.error("BLE ERROR:", e);
-    alert("BLE connection failed. Check console.");
+    alert(
+      "BLE connection failed.\n\n" +
+      "• Close other BLE apps\n" +
+      "• Power-cycle device\n" +
+      "• Location ON (Android)\n" +
+      "• Retry"
+    );
   }
 }
 
@@ -89,10 +106,8 @@ function onPacket(e) {
   const v = new Uint8Array(e.target.value.buffer);
   if (v.length !== 20) return;
 
-  // ADC
   for (let i = 0; i < 8; i++) adc[i] = v[i];
 
-  // IMU int8 -> signed
   for (let i = 0; i < 6; i++) {
     let x = v[8 + i];
     if (x > 127) x -= 256;
@@ -179,8 +194,7 @@ function drawIR(x, y) {
   ctx.strokeStyle = "rgb(255,50,50)";
   ctx.beginPath();
   for (let i = 0; i < irBuffer.length; i++) {
-    let v = irBuffer[i] / 365;
-    ctx.lineTo(x + i, y + 200 - v);
+    ctx.lineTo(x + i, y + 200 - irBuffer[i] / 365);
   }
   ctx.stroke();
 }
@@ -231,7 +245,7 @@ function drawMotorButton() {
   ctx.textBaseline = "alphabetic";
 }
 
-/* ================= MOUSE ================= */
+/* ================= MOTOR BLE WRITE ================= */
 canvas.addEventListener("mousedown", e => {
   const r = canvas.getBoundingClientRect();
   const x = e.clientX - r.left;
@@ -243,7 +257,10 @@ canvas.addEventListener("mousedown", e => {
     motorHighlight = true;
     motorHighlightUntil = performance.now() + 150;
 
-    console.log("Motor button pressed (BLE write can be added later)");
+    if (cmdChar) {
+      cmdChar.writeValue(Uint8Array.of(1));
+      console.log("🔔 Vibration command sent");
+    }
   }
 });
 </script>
