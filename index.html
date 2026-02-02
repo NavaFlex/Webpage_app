@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SENSE Dashboard</title>
+<title>SENSE Web Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -48,17 +48,13 @@
 
 <script>
 /* =========================================================
-   BLE UUIDs (MATCH ARDUINO)
+   BLE UUIDs (MATCH SENDER)
    ========================================================= */
 const SERVICE_UUID = "00001234-0000-1000-8000-00805f9b34fb";
 const RX_UUID      = "00004567-0000-1000-8000-00805f9b34fb";
 const CMD_UUID     = "00009999-0000-1000-8000-00805f9b34fb";
 
-let device, rxChar, cmdChar;
-
-/* =========================================================
-   BLE STATE
-   ========================================================= */
+let rxChar, cmdChar;
 let gattBusy = false;
 let notificationsEnabled = false;
 
@@ -69,13 +65,13 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 /* =========================================================
-   DATA (IDENTICAL TO PROCESSING)
+   DATA (SAME AS PROCESSING)
    ========================================================= */
 let adc = new Array(8).fill(0);
 let imu = new Array(6).fill(0);
 let mic = 0;
 let ir = 0;
-let motorOn = false;
+let motorOn = 0;
 let flags = 0;
 let pkt = 0;
 
@@ -84,18 +80,11 @@ let irBuffer = new Array(400).fill(0);
 let irIndex = 0;
 
 /* =========================================================
-   MOTOR BUTTON STATE (PROCESSING STYLE)
-   ========================================================= */
-let motorBtnHighlight = false;
-let motorBtnHighlightUntil = 0;
-const motorBtnHighlightMs = 150;
-
-/* =========================================================
    BLE CONNECT
    ========================================================= */
 async function connectBLE() {
   try {
-    device = await navigator.bluetooth.requestDevice({
+    const device = await navigator.bluetooth.requestDevice({
       filters: [{ name: "SENSE-SENDER" }],
       optionalServices: [SERVICE_UUID]
     });
@@ -124,23 +113,24 @@ async function connectBLE() {
 }
 
 /* =========================================================
-   BLE PACKET PARSE (20 BYTES)
+   PACKET PARSE (20 BYTES)
    ========================================================= */
 function onPacket(e) {
   const v = new Uint8Array(e.target.value.buffer);
   if (v.length !== 20) return;
 
+  // ADS
   for (let i = 0; i < 8; i++) adc[i] = v[i];
 
+  // IMU
   for (let i = 0; i < 6; i++) {
     let x = v[8 + i];
-    if (x > 127) x -= 256;
-    imu[i] = x;
+    imu[i] = (x > 127) ? x - 256 : x;
   }
 
   mic = v[14];
-  ir = (v[15] << 8) | v[16];
-  motorOn = v[17] === 1;
+  ir  = (v[15] << 8) | v[16];
+  motorOn = v[17];
   flags = v[18];
   pkt = v[19];
 
@@ -149,28 +139,23 @@ function onPacket(e) {
 }
 
 /* =========================================================
-   MOTOR COMMAND — GUARANTEED SAFE
+   MOTOR COMMAND (SAFE)
    ========================================================= */
 async function pulseMotor() {
   if (!cmdChar || !rxChar) return;
-
-  if (gattBusy) {
-    console.warn("GATT busy — motor skipped");
-    return;
-  }
+  if (gattBusy) return;
 
   gattBusy = true;
 
   try {
-    // 🔴 STOP NOTIFICATIONS
+    // Stop notifications to avoid GATT collision
     if (notificationsEnabled) {
       await rxChar.stopNotifications();
       notificationsEnabled = false;
     }
 
-    // 🔴 WRITE MOTOR COMMAND
+    // Send motor pulse command
     const cmd = new Uint8Array([1]);
-
     if (cmdChar.properties.writeWithoutResponse) {
       await cmdChar.writeValueWithoutResponse(cmd);
     } else {
@@ -179,10 +164,10 @@ async function pulseMotor() {
 
     console.log("✅ Motor command sent");
 
-    // 🔴 BLE STACK SETTLE
+    // Allow BLE stack to settle
     await new Promise(r => setTimeout(r, 60));
 
-    // 🔴 RESUME NOTIFICATIONS
+    // Resume notifications
     await rxChar.startNotifications();
     notificationsEnabled = true;
 
@@ -194,28 +179,23 @@ async function pulseMotor() {
 }
 
 /* =========================================================
-   MOTOR BUTTON CLICK (PROCESSING mousePressed())
+   MOTOR BUTTON CLICK
    ========================================================= */
 document.getElementById("motorBtn").onclick = async () => {
   await pulseMotor();
-  motorBtnHighlight = true;
-  motorBtnHighlightUntil = performance.now() + motorBtnHighlightMs;
 };
 
 /* =========================================================
-   DRAW LOOP (PROCESSING draw())
+   DRAW LOOP (PROCESSING-LIKE)
    ========================================================= */
 function draw() {
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   drawADC(40, 40);
-  drawIMU(600, 40);
   drawMic(40, 330);
-  drawFlags(600, 330);
   drawIR(40, 530);
   drawPacketIndicator(600, 720);
-  updateMotorButton();
 
   requestAnimationFrame(draw);
 }
@@ -227,32 +207,15 @@ requestAnimationFrame(draw);
 function drawADC(x, y) {
   ctx.fillStyle = "white";
   ctx.font = "20px Arial";
-  ctx.fillText("ADC Channels (0-100)", x, y - 15);
+  ctx.fillText("ADC Channels", x, y - 15);
 
   for (let i = 0; i < 8; i++) {
     let h = adc[i] * 2.2;
-    ctx.fillStyle = "rgb(0,180,255)";
+    ctx.fillStyle = "cyan";
     ctx.fillRect(x + i * 110, y + 220 - h, 70, h);
     ctx.fillStyle = "white";
     ctx.font = "14px Arial";
-    ctx.fillText(adc[i].toFixed(0), x + i * 110, y + 240);
-  }
-}
-
-function drawIMU(x, y) {
-  y += 200;
-  ctx.fillStyle = "white";
-  ctx.font = "20px Arial";
-  ctx.fillText("IMU Ax Ay Az Gx Gy Gz", x, y + 100);
-
-  for (let i = 0; i < 6; i++) {
-    let v = imu[i];
-    let h = (i < 3) ? v * 1.2 : v * 0.4;
-    ctx.fillStyle = "rgb(255,120,0)";
-    ctx.fillRect(x + i * 45, y + 200, 35, -h);
-    ctx.fillStyle = "white";
-    ctx.font = "14px Arial";
-    ctx.fillText(v.toFixed(0), x + i * 45, y + 230);
+    ctx.fillText(adc[i], x + i * 110, y + 240);
   }
 }
 
@@ -260,7 +223,7 @@ function drawMic(x, y) {
   ctx.fillStyle = "white";
   ctx.font = "20px Arial";
   ctx.fillText("Mic Level: " + mic, x, y + 30);
-  ctx.fillStyle = "rgb(0,255,150)";
+  ctx.fillStyle = "lime";
   ctx.fillRect(x, y + 45, mic * 1.4, 40);
 }
 
@@ -268,46 +231,20 @@ function drawIR(x, y) {
   ctx.fillStyle = "white";
   ctx.font = "20px Arial";
   ctx.fillText("IR Waveform", x, y - 15);
-  ctx.strokeStyle = "rgb(255,50,50)";
+  ctx.strokeStyle = "red";
   ctx.beginPath();
   for (let i = 0; i < irBuffer.length; i++) {
-    let v = irBuffer[i] / 365;
-    ctx.lineTo(x + i, y + 200 - v);
+    ctx.lineTo(x + i, y + 200 - irBuffer[i] / 400);
   }
   ctx.stroke();
-}
-
-function drawFlags(x, y) {
-  y += 200;
-  ctx.fillStyle = "white";
-  ctx.font = "20px Arial";
-  ctx.fillText("Flags", x, y);
-  ctx.font = "16px Arial";
-  ctx.fillText("ADS1 OK: " + !!(flags & 1), x, y + 30);
-  ctx.fillText("ADS2 OK: " + !!(flags & 2), x, y + 55);
-  ctx.fillText("MAX OK : " + !!(flags & 4), x, y + 80);
-  ctx.fillText("IMU OK : " + !!(flags & 8), x, y + 105);
-  ctx.fillText("MIC OK : " + !!(flags & 16), x, y + 130);
-  ctx.fillText("DEBUG  : " + !!(flags & 32), x, y + 155);
 }
 
 function drawPacketIndicator(x, y) {
   ctx.fillStyle = "white";
   ctx.font = "20px Arial";
   ctx.fillText("Packet Counter: " + pkt, x, y);
-  let base = (pkt & 0x0F) * 16;
-  ctx.fillStyle = `rgb(${base},100,${255 - base})`;
+  ctx.fillStyle = motorOn ? "red" : "gray";
   ctx.fillRect(x, y + 25, 250, 25);
-}
-
-function updateMotorButton() {
-  const btn = document.getElementById("motorBtn");
-  if (motorBtnHighlight && performance.now() > motorBtnHighlightUntil) {
-    motorBtnHighlight = false;
-  }
-  btn.style.background = motorBtnHighlight
-    ? "rgb(80,200,80)"
-    : "rgb(40,120,40)";
 }
 </script>
 
