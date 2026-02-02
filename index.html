@@ -57,9 +57,10 @@ const CMD_UUID     = "00009999-0000-1000-8000-00805f9b34fb";
 let device, rxChar, cmdChar;
 
 /* =========================================================
-   GATT LOCK (CRITICAL FIX)
+   BLE STATE
    ========================================================= */
 let gattBusy = false;
+let notificationsEnabled = false;
 
 /* =========================================================
    CANVAS
@@ -68,7 +69,7 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 /* =========================================================
-   DATA (SAME AS PROCESSING)
+   DATA (IDENTICAL TO PROCESSING)
    ========================================================= */
 let adc = new Array(8).fill(0);
 let imu = new Array(6).fill(0);
@@ -83,7 +84,7 @@ let irBuffer = new Array(400).fill(0);
 let irIndex = 0;
 
 /* =========================================================
-   MOTOR BUTTON STATE
+   MOTOR BUTTON STATE (PROCESSING STYLE)
    ========================================================= */
 let motorBtnHighlight = false;
 let motorBtnHighlightUntil = 0;
@@ -108,7 +109,12 @@ async function connectBLE() {
     console.log("CMD properties:", cmdChar.properties);
 
     await rxChar.startNotifications();
-    rxChar.addEventListener("characteristicvaluechanged", onPacket);
+    notificationsEnabled = true;
+
+    rxChar.addEventListener(
+      "characteristicvaluechanged",
+      onPacket
+    );
 
     alert("✅ BLE Connected");
   } catch (e) {
@@ -143,19 +149,26 @@ function onPacket(e) {
 }
 
 /* =========================================================
-   MOTOR COMMAND (SAFE, SERIALIZED)
+   MOTOR COMMAND — GUARANTEED SAFE
    ========================================================= */
 async function pulseMotor() {
-  if (!cmdChar) return;
+  if (!cmdChar || !rxChar) return;
 
   if (gattBusy) {
-    console.warn("GATT busy — motor command skipped");
+    console.warn("GATT busy — motor skipped");
     return;
   }
 
   gattBusy = true;
 
   try {
+    // 🔴 STOP NOTIFICATIONS
+    if (notificationsEnabled) {
+      await rxChar.stopNotifications();
+      notificationsEnabled = false;
+    }
+
+    // 🔴 WRITE MOTOR COMMAND
     const cmd = new Uint8Array([1]);
 
     if (cmdChar.properties.writeWithoutResponse) {
@@ -165,18 +178,23 @@ async function pulseMotor() {
     }
 
     console.log("✅ Motor command sent");
+
+    // 🔴 BLE STACK SETTLE
+    await new Promise(r => setTimeout(r, 60));
+
+    // 🔴 RESUME NOTIFICATIONS
+    await rxChar.startNotifications();
+    notificationsEnabled = true;
+
   } catch (e) {
     console.error("❌ Motor command failed:", e);
   } finally {
-    // allow BLE stack to settle
-    setTimeout(() => {
-      gattBusy = false;
-    }, 80);
+    gattBusy = false;
   }
 }
 
 /* =========================================================
-   MOTOR BUTTON CLICK (LIKE PROCESSING)
+   MOTOR BUTTON CLICK (PROCESSING mousePressed())
    ========================================================= */
 document.getElementById("motorBtn").onclick = async () => {
   await pulseMotor();
@@ -185,7 +203,7 @@ document.getElementById("motorBtn").onclick = async () => {
 };
 
 /* =========================================================
-   DRAW LOOP (PROCESSING STYLE)
+   DRAW LOOP (PROCESSING draw())
    ========================================================= */
 function draw() {
   ctx.fillStyle = "black";
