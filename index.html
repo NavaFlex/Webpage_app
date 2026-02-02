@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SENSE Dashboard</title>
+<title>SENSE Web Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -13,6 +13,7 @@
     font-family: Arial, sans-serif;
     overflow: hidden;
   }
+
   button {
     position: absolute;
     top: 10px;
@@ -21,9 +22,19 @@
     font-size: 14px;
     z-index: 10;
   }
+
   #motorBtn {
-    top: 60px;
+    position: absolute;
+    left: 850px;
+    top: 650px;
+    width: 200px;
+    height: 40px;
+    border-radius: 6px;
     background: rgb(40,120,40);
+    color: white;
+    font-size: 16px;
+    border: none;
+    cursor: pointer;
   }
 </style>
 </head>
@@ -31,39 +42,49 @@
 <body>
 
 <button onclick="connectBLE()">Connect BLE</button>
-<button id="motorBtn" onclick="pulseMotor()">PULSE MOTOR</button>
+<button id="motorBtn">PULSE MOTOR</button>
 
 <canvas id="c" width="1100" height="800"></canvas>
 
 <script>
-/* ================= BLE UUIDs ================= */
+/* =========================================================
+   BLE UUIDs (MATCH SENDER)
+   ========================================================= */
 const SERVICE_UUID = "00001234-0000-1000-8000-00805f9b34fb";
 const RX_UUID      = "00004567-0000-1000-8000-00805f9b34fb";
 const CMD_UUID     = "00009999-0000-1000-8000-00805f9b34fb";
 
-let device, rxChar, cmdChar;
+let rxChar, cmdChar;
 let gattBusy = false;
+let notificationsEnabled = false;
 
-/* ================= CANVAS ================= */
+/* =========================================================
+   CANVAS
+   ========================================================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-/* ================= DATA ================= */
+/* =========================================================
+   DATA (SAME AS PROCESSING)
+   ========================================================= */
 let adc = new Array(8).fill(0);
 let imu = new Array(6).fill(0);
 let mic = 0;
 let ir = 0;
-let motorOn = false;
+let motorOn = 0;
 let flags = 0;
 let pkt = 0;
 
+/* IR waveform buffer */
 let irBuffer = new Array(400).fill(0);
 let irIndex = 0;
 
-/* ================= BLE CONNECT ================= */
+/* =========================================================
+   BLE CONNECT
+   ========================================================= */
 async function connectBLE() {
   try {
-    device = await navigator.bluetooth.requestDevice({
+    const device = await navigator.bluetooth.requestDevice({
       filters: [{ name: "SENSE-SENDER" }],
       optionalServices: [SERVICE_UUID]
     });
@@ -74,23 +95,34 @@ async function connectBLE() {
     rxChar  = await service.getCharacteristic(RX_UUID);
     cmdChar = await service.getCharacteristic(CMD_UUID);
 
-    await rxChar.startNotifications();
-    rxChar.addEventListener("characteristicvaluechanged", onPacket);
-
     console.log("CMD properties:", cmdChar.properties);
+
+    await rxChar.startNotifications();
+    notificationsEnabled = true;
+
+    rxChar.addEventListener(
+      "characteristicvaluechanged",
+      onPacket
+    );
+
     alert("✅ BLE Connected");
   } catch (e) {
-    if (e.name !== "NotFoundError") console.error(e);
+    console.error(e);
+    alert("❌ BLE connection failed");
   }
 }
 
-/* ================= PACKET PARSE ================= */
+/* =========================================================
+   PACKET PARSE (20 BYTES)
+   ========================================================= */
 function onPacket(e) {
   const v = new Uint8Array(e.target.value.buffer);
   if (v.length !== 20) return;
 
+  // ADS
   for (let i = 0; i < 8; i++) adc[i] = v[i];
 
+  // IMU
   for (let i = 0; i < 6; i++) {
     let x = v[8 + i];
     imu[i] = (x > 127) ? x - 256 : x;
@@ -98,7 +130,7 @@ function onPacket(e) {
 
   mic = v[14];
   ir  = (v[15] << 8) | v[16];
-  motorOn = v[17] === 1;
+  motorOn = v[17];
   flags = v[18];
   pkt = v[19];
 
@@ -106,38 +138,72 @@ function onPacket(e) {
   irIndex = (irIndex + 1) % irBuffer.length;
 }
 
-/* ================= MOTOR COMMAND ================= */
+/* =========================================================
+   MOTOR COMMAND (SAFE)
+   ========================================================= */
 async function pulseMotor() {
-  if (!cmdChar || gattBusy) return;
+  if (!cmdChar || !rxChar) return;
+  if (gattBusy) return;
+
   gattBusy = true;
 
   try {
-    await cmdChar.writeValueWithoutResponse(new Uint8Array([1]));
-    console.log("✅ Motor command sent");
-  } catch (e) {
-    console.error("Motor command failed", e);
-  }
+    // Stop notifications to avoid GATT collision
+    if (notificationsEnabled) {
+      await rxChar.stopNotifications();
+      notificationsEnabled = false;
+    }
 
-  setTimeout(() => gattBusy = false, 200);
+    // Send motor pulse command
+    const cmd = new Uint8Array([1]);
+    if (cmdChar.properties.writeWithoutResponse) {
+      await cmdChar.writeValueWithoutResponse(cmd);
+    } else {
+      await cmdChar.writeValue(cmd);
+    }
+
+    console.log("✅ Motor command sent");
+
+    // Allow BLE stack to settle
+    await new Promise(r => setTimeout(r, 60));
+
+    // Resume notifications
+    await rxChar.startNotifications();
+    notificationsEnabled = true;
+
+  } catch (e) {
+    console.error("❌ Motor command failed:", e);
+  } finally {
+    gattBusy = false;
+  }
 }
 
-/* ================= DRAW LOOP ================= */
+/* =========================================================
+   MOTOR BUTTON CLICK
+   ========================================================= */
+document.getElementById("motorBtn").onclick = async () => {
+  await pulseMotor();
+};
+
+/* =========================================================
+   DRAW LOOP (PROCESSING-LIKE)
+   ========================================================= */
 function draw() {
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   drawADC(40, 40);
-  drawIMU(600, 40);
   drawMic(40, 330);
-  drawFlags(600, 330);
   drawIR(40, 530);
-  drawPacket(600, 720);
+  drawPacketIndicator(600, 720);
 
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
 
-/* ================= UI ================= */
+/* =========================================================
+   DRAW FUNCTIONS
+   ========================================================= */
 function drawADC(x, y) {
   ctx.fillStyle = "white";
   ctx.font = "20px Arial";
@@ -145,28 +211,26 @@ function drawADC(x, y) {
 
   for (let i = 0; i < 8; i++) {
     let h = adc[i] * 2.2;
-    ctx.fillStyle = "rgb(0,180,255)";
+    ctx.fillStyle = "cyan";
     ctx.fillRect(x + i * 110, y + 220 - h, 70, h);
-  }
-}
-
-function drawIMU(x, y) {
-  y += 200;
-  for (let i = 0; i < 6; i++) {
-    let v = imu[i];
-    ctx.fillStyle = "rgb(255,120,0)";
-    ctx.fillRect(x + i * 45, y + 200, 35, -v);
+    ctx.fillStyle = "white";
+    ctx.font = "14px Arial";
+    ctx.fillText(adc[i], x + i * 110, y + 240);
   }
 }
 
 function drawMic(x, y) {
   ctx.fillStyle = "white";
-  ctx.fillText("Mic: " + mic, x, y + 30);
+  ctx.font = "20px Arial";
+  ctx.fillText("Mic Level: " + mic, x, y + 30);
   ctx.fillStyle = "lime";
   ctx.fillRect(x, y + 45, mic * 1.4, 40);
 }
 
 function drawIR(x, y) {
+  ctx.fillStyle = "white";
+  ctx.font = "20px Arial";
+  ctx.fillText("IR Waveform", x, y - 15);
   ctx.strokeStyle = "red";
   ctx.beginPath();
   for (let i = 0; i < irBuffer.length; i++) {
@@ -175,15 +239,12 @@ function drawIR(x, y) {
   ctx.stroke();
 }
 
-function drawFlags(x, y) {
-  y += 200;
+function drawPacketIndicator(x, y) {
   ctx.fillStyle = "white";
-  ctx.fillText("Flags: " + flags, x, y);
-}
-
-function drawPacket(x, y) {
-  ctx.fillStyle = "white";
-  ctx.fillText("Packet: " + pkt, x, y);
+  ctx.font = "20px Arial";
+  ctx.fillText("Packet Counter: " + pkt, x, y);
+  ctx.fillStyle = motorOn ? "red" : "gray";
+  ctx.fillRect(x, y + 25, 250, 25);
 }
 </script>
 
