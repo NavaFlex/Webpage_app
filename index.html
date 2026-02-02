@@ -57,13 +57,18 @@ const CMD_UUID     = "00009999-0000-1000-8000-00805f9b34fb";
 let device, rxChar, cmdChar;
 
 /* =========================================================
+   GATT LOCK (CRITICAL FIX)
+   ========================================================= */
+let gattBusy = false;
+
+/* =========================================================
    CANVAS
    ========================================================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 /* =========================================================
-   DATA (IDENTICAL TO PROCESSING)
+   DATA (SAME AS PROCESSING)
    ========================================================= */
 let adc = new Array(8).fill(0);
 let imu = new Array(6).fill(0);
@@ -78,7 +83,7 @@ let irBuffer = new Array(400).fill(0);
 let irIndex = 0;
 
 /* =========================================================
-   MOTOR BUTTON STATE (PROCESSING-STYLE)
+   MOTOR BUTTON STATE
    ========================================================= */
 let motorBtnHighlight = false;
 let motorBtnHighlightUntil = 0;
@@ -97,8 +102,10 @@ async function connectBLE() {
     const server = await device.gatt.connect();
     const service = await server.getPrimaryService(SERVICE_UUID);
 
-    rxChar = await service.getCharacteristic(RX_UUID);
+    rxChar  = await service.getCharacteristic(RX_UUID);
     cmdChar = await service.getCharacteristic(CMD_UUID);
+
+    console.log("CMD properties:", cmdChar.properties);
 
     await rxChar.startNotifications();
     rxChar.addEventListener("characteristicvaluechanged", onPacket);
@@ -111,7 +118,7 @@ async function connectBLE() {
 }
 
 /* =========================================================
-   BLE PACKET PARSE (20 BYTES — EXACT MATCH)
+   BLE PACKET PARSE (20 BYTES)
    ========================================================= */
 function onPacket(e) {
   const v = new Uint8Array(e.target.value.buffer);
@@ -136,19 +143,40 @@ function onPacket(e) {
 }
 
 /* =========================================================
-   MOTOR COMMAND (BLE EQUIVALENT OF "M1\n")
+   MOTOR COMMAND (SAFE, SERIALIZED)
    ========================================================= */
 async function pulseMotor() {
   if (!cmdChar) return;
+
+  if (gattBusy) {
+    console.warn("GATT busy — motor command skipped");
+    return;
+  }
+
+  gattBusy = true;
+
   try {
-    await cmdChar.writeValue(new Uint8Array([1]));
+    const cmd = new Uint8Array([1]);
+
+    if (cmdChar.properties.writeWithoutResponse) {
+      await cmdChar.writeValueWithoutResponse(cmd);
+    } else {
+      await cmdChar.writeValue(cmd);
+    }
+
+    console.log("✅ Motor command sent");
   } catch (e) {
-    console.error("Motor command failed", e);
+    console.error("❌ Motor command failed:", e);
+  } finally {
+    // allow BLE stack to settle
+    setTimeout(() => {
+      gattBusy = false;
+    }, 80);
   }
 }
 
 /* =========================================================
-   MOTOR BUTTON CLICK (PROCESSING mousePressed())
+   MOTOR BUTTON CLICK (LIKE PROCESSING)
    ========================================================= */
 document.getElementById("motorBtn").onclick = async () => {
   await pulseMotor();
@@ -157,7 +185,7 @@ document.getElementById("motorBtn").onclick = async () => {
 };
 
 /* =========================================================
-   DRAW LOOP (PROCESSING draw())
+   DRAW LOOP (PROCESSING STYLE)
    ========================================================= */
 function draw() {
   ctx.fillStyle = "black";
@@ -169,7 +197,6 @@ function draw() {
   drawFlags(600, 330);
   drawIR(40, 530);
   drawPacketIndicator(600, 720);
-
   updateMotorButton();
 
   requestAnimationFrame(draw);
@@ -177,7 +204,7 @@ function draw() {
 requestAnimationFrame(draw);
 
 /* =========================================================
-   DRAW FUNCTIONS (1:1 WITH PROCESSING)
+   DRAW FUNCTIONS
    ========================================================= */
 function drawADC(x, y) {
   ctx.fillStyle = "white";
@@ -255,9 +282,6 @@ function drawPacketIndicator(x, y) {
   ctx.fillRect(x, y + 25, 250, 25);
 }
 
-/* =========================================================
-   MOTOR BUTTON VISUAL UPDATE
-   ========================================================= */
 function updateMotorButton() {
   const btn = document.getElementById("motorBtn");
   if (motorBtnHighlight && performance.now() > motorBtnHighlightUntil) {
