@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Posture Monitor — XIAO nRF52840</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg:       #0a0c10;
+    --surface:  #111318;
+    --surface2: #1a1d24;
+    --border:   rgba(255,255,255,0.08);
+    --accent:   #00f5c4;
+    --accent2:  #ff4d6d;
+    --accent3:  #7b61ff;
+    --text:     #e8eaf0;
+    --muted:    #6b7280;
+    --left-col: #ff4d6d;
+    --right-col:#00f5c4;
+    --fwd-col:  #7b61ff;
+    --back-col: #f59e0b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.2rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .logo { font-size: 1rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+  .logo span { color: var(--muted); font-weight: 400; }
+
+  .header-right { display: flex; align-items: center; gap: 12px; }
+
+  /* Phase badge */
+  #phase-badge {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    background: var(--surface2);
+    transition: all 0.3s;
+  }
+  #phase-badge.bias    { border-color: var(--accent3); color: var(--accent3); }
+  #phase-badge.cal     { border-color: var(--accent);  color: var(--accent);  }
+  #phase-badge.ready   { border-color: var(--right-col); color: var(--right-col); }
+
+  #ble-btn {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  #ble-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #ble-btn.connected { border-color: var(--accent); color: var(--accent); }
+  #ble-btn.connected .dot { background: var(--accent); animation: pulse 1.5s infinite; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Main layout ── */
+  main {
+    display: grid;
+    grid-template-columns: 270px 1fr 270px;
+    gap: 0;
+    height: calc(100vh - 62px);
+  }
+
+  .panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    overflow-y: auto;
+  }
+  .panel.right { border-right: none; border-left: 1px solid var(--border); }
+
+  .panel-title {
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Direction display ── */
+  #direction-display {
+    text-align: center;
+    padding: 1.4rem 1rem 1rem;
+    background: var(--surface2);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    transition: border-color 0.3s;
+  }
+  #direction-label {
+    font-size: 2.6rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    transition: color 0.25s;
+    color: var(--muted);
+  }
+  #direction-sub {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 4px;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── Hold timer bar ── */
+  #hold-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  #hold-label-row {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+  }
+  #hold-track {
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #hold-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.1s linear, background 0.3s;
+  }
+
+  /* ── Metric cards ── */
+  .metric {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--border);
+  }
+  .metric-label {
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+    font-family: 'Space Mono', monospace;
+  }
+  .metric-value {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .metric-value.accent  { color: var(--accent); }
+  .metric-unit { font-size: 0.75rem; color: var(--muted); margin-left: 3px; }
+
+  /* ── Angle bars ── */
+  .angle-bar-wrap { display: flex; flex-direction: column; gap: 7px; }
+  .angle-bar-label {
+    display: flex; justify-content: space-between;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.66rem; color: var(--muted);
+  }
+  .angle-bar-track {
+    height: 6px;
+    background: var(--surface2);
+    border-radius: 3px;
+    position: relative;
+  }
+  .angle-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.08s ease, background 0.2s;
+    position: absolute;
+    top: 0;
+  }
+  .angle-bar-center {
+    position: absolute;
+    top: -2px; width: 2px; height: 10px;
+    background: rgba(255,255,255,0.2);
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 1px;
+  }
+
+  /* ── Canvas center ── */
+  #canvas-wrap {
+    position: relative;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas#body-canvas { display: block; max-width: 100%; max-height: 100%; }
+
+  #status-bar {
+    position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 0.4rem 1.2rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* ── Compass ── */
+  #compass-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
+
+  /* ── Log ── */
+  #log-wrap {
+    flex: 1; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .log-entry {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.64rem;
+    padding: 5px 8px;
+    border-radius: 4px;
+    background: var(--surface2);
+    border-left: 2px solid var(--border);
+    color: var(--muted);
+    animation: slideIn 0.2s ease;
+  }
+  .log-entry.LEFT     { border-left-color: var(--left-col);  color: var(--left-col); }
+  .log-entry.RIGHT    { border-left-color: var(--right-col); color: var(--right-col); }
+  .log-entry.FORWARD  { border-left-color: var(--fwd-col);   color: var(--fwd-col); }
+  .log-entry.BACKWARD { border-left-color: var(--back-col);  color: var(--back-col); }
+  @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:none} }
+
+  /* ── Raw data ── */
+  #raw-data {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.67rem;
+    color: var(--muted);
+    background: var(--surface2);
+    border-radius: 6px;
+    padding: 0.75rem;
+    line-height: 1.9;
+    word-break: break-all;
+  }
+
+  #demo-btn {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    padding: 0.55rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  #demo-btn:hover { border-color: var(--accent3); color: var(--accent3); }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto 340px auto; }
+    .panel.left { order: 2; }
+    #canvas-wrap { order: 1; }
+    .panel.right { order: 3; border-left: none; border-top: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Posture<span>Back</span> · XIAO nRF52840</div>
+  <div class="header-right">
+    <div id="phase-badge">WAITING</div>
+    <button id="ble-btn">
+      <span class="dot"></span>
+      <span id="ble-label">Connect BLE</span>
+    </button>
+  </div>
+</header>
+
+<main>
+  <!-- ── LEFT PANEL ── -->
+  <div class="panel left">
+    <div class="panel-title">Orientation</div>
+
+    <div id="direction-display">
+      <div id="direction-label">—</div>
+      <div id="direction-sub">WAITING FOR DATA</div>
+    </div>
+
+    <!-- Hold timer bar -->
+    <div id="hold-wrap">
+      <div id="hold-label-row">
+        <span>Hold duration</span>
+        <span id="hold-sec">0.0 s</span>
+      </div>
+      <div id="hold-track">
+        <div id="hold-fill"></div>
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Roll — Left / Right</div>
+      <div class="metric-value" id="roll-val">0.0<span class="metric-unit">°</span></div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Pitch — Fwd / Back</div>
+      <div class="metric-value" id="pitch-val">0.0<span class="metric-unit">°</span></div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Yaw / Heading</div>
+      <div class="metric-value accent" id="yaw-val">0.0<span class="metric-unit">°</span></div>
+    </div>
+
+    <div class="panel-title" style="margin-top:0.2rem">Angle Bars</div>
+    <div class="angle-bar-wrap">
+      <div class="angle-bar-label">
+        <span style="color:var(--left-col)">◀ LEFT</span>
+        <span>Roll</span>
+        <span style="color:var(--right-col)">RIGHT ▶</span>
+      </div>
+      <div class="angle-bar-track">
+        <div class="angle-bar-center"></div>
+        <div class="angle-bar-fill" id="roll-bar" style="width:0%;left:50%;background:var(--accent)"></div>
+      </div>
+      <div class="angle-bar-label">
+        <span style="color:var(--back-col)">▼ BACK</span>
+        <span>Pitch</span>
+        <span style="color:var(--fwd-col)">FWD ▲</span>
+      </div>
+      <div class="angle-bar-track">
+        <div class="angle-bar-center"></div>
+        <div class="angle-bar-fill" id="pitch-bar" style="width:0%;left:50%;background:var(--fwd-col)"></div>
+      </div>
+    </div>
+
+    <button id="demo-btn" onclick="startDemo()">▶ Demo Mode (no BLE)</button>
+  </div>
+
+  <!-- ── CENTER: 3D Body ── -->
+  <div id="canvas-wrap">
+    <canvas id="body-canvas"></canvas>
+    <div id="status-bar">Place sensor on upper back · USB-C facing down</div>
+  </div>
+
+  <!-- ── RIGHT PANEL ── -->
+  <div class="panel right">
+    <div class="panel-title">Compass · Yaw</div>
+    <div id="compass-wrap">
+      <svg id="compass-svg" width="180" height="180" viewBox="-90 -90 180 180">
+        <circle r="85" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+        <circle r="72" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <g id="compass-ticks"></g>
+        <g id="compass-needle" transform="rotate(0)">
+          <polygon points="0,-60 7,20 0,10 -7,20" fill="#ff4d6d" opacity="0.9"/>
+          <polygon points="0,60 7,20 0,10 -7,20" fill="rgba(255,255,255,0.18)"/>
+        </g>
+        <circle r="5" fill="var(--accent)"/>
+        <text id="compass-deg" x="0" y="78" text-anchor="middle"
+          font-family="'Space Mono',monospace" font-size="11" fill="#6b7280">000°</text>
+      </svg>
+    </div>
+
+    <div class="panel-title">Movement Log</div>
+    <div id="log-wrap"></div>
+
+    <div class="panel-title">Raw JSON</div>
+    <div id="raw-data">—<br>Source: —</div>
+  </div>
+</main>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let pitch = 0, roll = 0, yaw = 0, held = 0;
+let currentDir = 'CENTER';
+let lastLogDir = '';
+let demoInterval = null;
+
+// Match your Arduino thresholds
+const ROLL_THRESH  = 20;
+const PITCH_THRESH = 20;
+const HOLD_MAX_S   = 5;   // bar fills at 5 seconds
+
+// ─── BLE ─────────────────────────────────────────────────────────────────────
+// Must match your Arduino UUIDs exactly
+const SERVICE_UUID = '12345678-1234-1234-1234-1234567890ab';
+const CHAR_UUID    = '12345678-1234-1234-1234-1234567890ac';
+let bleDevice = null, bleChar = null;
+
+document.getElementById('ble-btn').onclick = async () => {
+  if (bleDevice && bleDevice.gatt.connected) {
+    bleDevice.gatt.disconnect();
+    setBleUI(false);
+    return;
+  }
+  if (!navigator.bluetooth) {
+    alert('Web Bluetooth is not supported in this browser.\nUse Chrome or Edge on desktop or Android.\nTry Demo Mode instead.');
+    return;
+  }
+  try {
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ name: 'PostureBack' }],         // matches BLE.setLocalName("PostureBack")
+      optionalServices: [SERVICE_UUID]
+    });
+    const server  = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    bleChar        = await service.getCharacteristic(CHAR_UUID);
+    await bleChar.startNotifications();
+    bleChar.addEventListener('characteristicvaluechanged', onBleData);
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      setBleUI(false);
+      setStatus('Disconnected — reconnect or use Demo Mode');
+    });
+    setBleUI(true);
+    if (demoInterval) { clearInterval(demoInterval); demoInterval = null; }
+    setStatus('Connected · ' + bleDevice.name);
+  } catch(e) {
+    console.error(e);
+    setStatus('BLE error: ' + e.message);
+  }
+};
+
+function onBleData(e) {
+  const str = new TextDecoder().decode(e.target.value).trim();
+
+  // Handle status messages from boot phases
+  try {
+    const obj = JSON.parse(str);
+
+    if (obj.status === 'bias_sampling') {
+      setPhaseBadge('BIAS SAMPLING', 'bias');
+      setStatus('Phase 1: Gyro bias — stay completely still (2 sec)');
+      document.getElementById('raw-data').innerHTML = str + '<br>Source: BLE · boot';
+      return;
+    }
+    if (obj.status === 'calibrating') {
+      setPhaseBadge('CALIBRATING', 'cal');
+      setStatus('Phase 2: Calibration — hold neutral posture (5 sec)');
+      document.getElementById('raw-data').innerHTML = str + '<br>Source: BLE · boot';
+      return;
+    }
+    if (obj.status === 'ready') {
+      setPhaseBadge('LIVE', 'ready');
+      setStatus('Monitoring · USB-C down · upper back');
+      return;
+    }
+
+    // Normal data packet: {"pitch":X,"roll":X,"yaw":X,"dir":"X","held":X}
+    pitch = parseFloat(obj.pitch) || 0;
+    roll  = parseFloat(obj.roll)  || 0;
+    yaw   = parseFloat(obj.yaw)   || 0;
+    held  = parseFloat(obj.held)  || 0;
+    currentDir = obj.dir || 'CENTER';
+
+    updateAll();
+    document.getElementById('raw-data').innerHTML =
+      str.replace(/,/g, ',<br>').replace(/{/, '{<br>').replace(/}/, '<br>}') +
+      '<br>Source: BLE';
+
+    if (!document.getElementById('phase-badge').classList.contains('ready')) {
+      setPhaseBadge('LIVE', 'ready');
+      setStatus('Monitoring · USB-C down · upper back');
+    }
+  } catch(err) {
+    document.getElementById('raw-data').innerHTML = str + '<br>Source: BLE · parse error';
+  }
+}
+
+function setBleUI(connected) {
+  const btn = document.getElementById('ble-btn');
+  btn.className = connected ? 'connected' : '';
+  document.getElementById('ble-label').textContent = connected ? 'Disconnect' : 'Connect BLE';
+}
+
+function setPhaseBadge(text, cls) {
+  const b = document.getElementById('phase-badge');
+  b.textContent = text;
+  b.className   = cls;
+}
+
+// ─── Demo mode ───────────────────────────────────────────────────────────────
+function startDemo() {
+  if (demoInterval) clearInterval(demoInterval);
+  setPhaseBadge('DEMO', 'ready');
+  let t = 0, heldT = 0;
+  demoInterval = setInterval(() => {
+    t += 0.04;
+    roll  = 35 * Math.sin(t * 0.6);
+    pitch = 22 * Math.sin(t * 0.35);
+    yaw   = (yaw + 0.9) % 360;
+
+    // Simulate hold timer
+    if (Math.abs(roll) > ROLL_THRESH || Math.abs(pitch) > PITCH_THRESH) {
+      heldT = Math.min(heldT + 0.05, HOLD_MAX_S);
+    } else {
+      heldT = Math.max(heldT - 0.15, 0);
+    }
+    held = heldT;
+
+    if      (Math.abs(roll)  > ROLL_THRESH  && held > 0.8)  currentDir = roll  > 0 ? 'RIGHT'   : 'LEFT';
+    else if (Math.abs(pitch) > PITCH_THRESH && held > 0.8)  currentDir = pitch > 0 ? 'FORWARD' : 'BACKWARD';
+    else                                                      currentDir = 'CENTER';
+
+    updateAll();
+    document.getElementById('raw-data').innerHTML =
+      `{"pitch":${pitch.toFixed(2)},"roll":${roll.toFixed(2)},<br>"yaw":${yaw.toFixed(2)},"dir":"${currentDir}","held":${held.toFixed(1)}}<br>Source: DEMO`;
+  }, 50);
+  setStatus('Demo mode — simulating posture motion');
+}
+
+// ─── Update all UI ────────────────────────────────────────────────────────────
+function updateAll() {
+  // Numeric readouts
+  document.getElementById('roll-val').innerHTML  = roll.toFixed(1)  + '<span class="metric-unit">°</span>';
+  document.getElementById('pitch-val').innerHTML = pitch.toFixed(1) + '<span class="metric-unit">°</span>';
+  document.getElementById('yaw-val').innerHTML   = yaw.toFixed(1)   + '<span class="metric-unit">°</span>';
+
+  // Direction label color
+  const dirColors = {
+    LEFT:     'var(--left-col)',
+    RIGHT:    'var(--right-col)',
+    FORWARD:  'var(--fwd-col)',
+    BACKWARD: 'var(--back-col)',
+    CENTER:   'var(--muted)'
+  };
+  const lbl = document.getElementById('direction-label');
+  lbl.textContent   = currentDir;
+  lbl.style.color   = dirColors[currentDir] || 'var(--muted)';
+
+  // Direction display border
+  const dd = document.getElementById('direction-display');
+  const borderMap = { LEFT:'var(--left-col)', RIGHT:'var(--right-col)', FORWARD:'var(--fwd-col)', BACKWARD:'var(--back-col)', CENTER:'var(--border)' };
+  dd.style.borderColor = borderMap[currentDir] || 'var(--border)';
+
+  document.getElementById('direction-sub').textContent =
+    `ROLL ${roll >= 0 ? '+' : ''}${roll.toFixed(1)}°  PITCH ${pitch >= 0 ? '+' : ''}${pitch.toFixed(1)}°`;
+
+  // Hold timer bar
+  // held = seconds confirmed direction has been sustained (from Arduino JSON)
+  const holdPct = Math.min(held / HOLD_MAX_S, 1) * 100;
+  const holdFill = document.getElementById('hold-fill');
+  holdFill.style.width      = holdPct + '%';
+  holdFill.style.background = held > 0 ? (dirColors[currentDir] || 'var(--accent)') : 'var(--accent)';
+  document.getElementById('hold-sec').textContent = held.toFixed(1) + ' s';
+
+  // Angle bars
+  const rollPct = Math.min(Math.max(roll / 90, -1), 1);
+  const rb = document.getElementById('roll-bar');
+  if (rollPct < 0) {
+    rb.style.left   = (50 + rollPct * 50) + '%';
+    rb.style.width  = (-rollPct * 50) + '%';
+    rb.style.background = 'var(--left-col)';
+  } else {
+    rb.style.left  = '50%';
+    rb.style.width = (rollPct * 50) + '%';
+    rb.style.background = 'var(--right-col)';
+  }
+
+  const pitchPct = Math.min(Math.max(pitch / 90, -1), 1);
+  const pb = document.getElementById('pitch-bar');
+  if (pitchPct < 0) {
+    pb.style.left   = (50 + pitchPct * 50) + '%';
+    pb.style.width  = (-pitchPct * 50) + '%';
+    pb.style.background = 'var(--back-col)';
+  } else {
+    pb.style.left  = '50%';
+    pb.style.width = (pitchPct * 50) + '%';
+    pb.style.background = 'var(--fwd-col)';
+  }
+
+  // Log entry on direction change
+  if (currentDir !== lastLogDir) {
+    if (currentDir !== 'CENTER') addLog(currentDir, currentDir);
+    lastLogDir = currentDir;
+  }
+
+  updateCompass(yaw);
+  drawBody();
+}
+
+// ─── Log ─────────────────────────────────────────────────────────────────────
+function addLog(text, cls) {
+  const wrap = document.getElementById('log-wrap');
+  const now  = new Date();
+  const ts   = now.getHours().toString().padStart(2,'0') + ':' +
+               now.getMinutes().toString().padStart(2,'0') + ':' +
+               now.getSeconds().toString().padStart(2,'0');
+  const el   = document.createElement('div');
+  el.className   = 'log-entry ' + cls;
+  el.textContent = ts + '  ' + text;
+  wrap.prepend(el);
+  while (wrap.children.length > 25) wrap.removeChild(wrap.lastChild);
+}
+
+// ─── Compass ─────────────────────────────────────────────────────────────────
+(function buildTicks() {
+  const g = document.getElementById('compass-ticks');
+  ['N','NE','E','SE','S','SW','W','NW'].forEach((lbl, i) => {
+    const ang   = i * 45 * Math.PI / 180;
+    const major = i % 2 === 0;
+    const r1 = major ? 70 : 74, r2 = 83;
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', Math.sin(ang)*r1); line.setAttribute('y1', -Math.cos(ang)*r1);
+    line.setAttribute('x2', Math.sin(ang)*r2); line.setAttribute('y2', -Math.cos(ang)*r2);
+    line.setAttribute('stroke', major ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)');
+    line.setAttribute('stroke-width', major ? '1.5' : '1');
+    g.appendChild(line);
+    if (major) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x', Math.sin(ang)*55); t.setAttribute('y', -Math.cos(ang)*55);
+      t.setAttribute('text-anchor','middle'); t.setAttribute('dominant-baseline','central');
+      t.setAttribute('font-family',"'Space Mono',monospace");
+      t.setAttribute('font-size', lbl === 'N' ? '13' : '10');
+      t.setAttribute('font-weight', lbl === 'N' ? '700' : '400');
+      t.setAttribute('fill', lbl === 'N' ? '#ff4d6d' : 'rgba(255,255,255,0.45)');
+      t.textContent = lbl;
+      g.appendChild(t);
+    }
+  });
+})();
+
+function updateCompass(h) {
+  document.getElementById('compass-needle').setAttribute('transform','rotate('+h+')');
+  document.getElementById('compass-deg').textContent = Math.round(h).toString().padStart(3,'0') + '°';
+}
+
+// ─── Status bar ───────────────────────────────────────────────────────────────
+function setStatus(t) { document.getElementById('status-bar').textContent = t; }
+
+// ─── 3D Body Canvas ───────────────────────────────────────────────────────────
+const canvas = document.getElementById('body-canvas');
+const ctx    = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const wrap = document.getElementById('canvas-wrap');
+  canvas.width  = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  drawBody();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function project(x, y, z, cx, cy, scale) {
+  const fov = 600;
+  const dz  = fov / (fov + z);
+  return { x: cx + x * dz * scale, y: cy + y * dz * scale };
+}
+
+function rotatePoint(px, py, pz, pitchRad, rollRad) {
+  let nx = px * Math.cos(rollRad) - py * Math.sin(rollRad);
+  let ny = px * Math.sin(rollRad) + py * Math.cos(rollRad);
+  let nz = pz;
+  let ry = ny * Math.cos(pitchRad) - nz * Math.sin(pitchRad);
+  let rz = ny * Math.sin(pitchRad) + nz * Math.cos(pitchRad);
+  return [nx, ry, rz];
+}
+
+function drawBody() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const cx    = W / 2;
+  const cy    = H / 2 + 10;
+  const scale = Math.min(W, H) / 520;
+
+  const pRad = (-pitch * Math.PI / 180) * 0.6;
+  const rRad = (roll   * Math.PI / 180) * 0.8;
+
+  function rp(x,y,z) { return rotatePoint(x,y,z,pRad,rRad); }
+  function pr(x,y,z) {
+    const [rx,ry,rz] = rp(x,y,z);
+    return project(rx, ry, rz, cx, cy, scale);
+  }
+
+  const sk = {
+    headC:    [0,-155,0], headR: 28,
+    neckTop:  [0,-127,0], neckBot: [0,-110,0],
+    shouldL:  [-70,-100,0], shouldR: [70,-100,0],
+    chestC:   [0,-95,0],
+    hipL:     [-38,30,0],  hipR:    [38,30,0],
+    elbowL:   [-110,-30,0],wristL:  [-120,60,0],
+    elbowR:   [110,-30,0], wristR:  [120,60,0],
+    kneeL:    [-38,120,0], ankleL:  [-38,210,0], footL: [-55,218,0],
+    kneeR:    [38,120,0],  ankleR:  [38,210,0],  footR: [55,218,0],
+    spine:    [[0,-90,0],[0,-60,0],[0,-30,0],[0,0,0],[0,30,0]],
+    sensorPt: [0,-72,-6],   // sensor on upper back
+  };
+
+  const rollAbs = Math.abs(roll);
+  const rollT   = Math.min(rollAbs / 45, 1);
+  const bodyColor = '#2a3040';
+  const limbColor = '#1e2535';
+
+  // Direction-aware highlight colors
+  const colL = `rgba(255,77,109,${0.12 + rollT * 0.55})`;
+  const colR = `rgba(0,245,196,${0.12 + rollT * 0.55})`;
+
+  function drawLine(a, b, color, lw) {
+    const pa = pr(...a), pb = pr(...b);
+    ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y);
+    ctx.strokeStyle = color; ctx.lineWidth = lw * scale; ctx.lineCap = 'round'; ctx.stroke();
+  }
+  function drawCircle(pt, r, fill, stroke) {
+    const p = pr(...pt);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * scale, 0, Math.PI*2);
+    ctx.fillStyle = fill; ctx.fill();
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1.5 * scale; ctx.stroke(); }
+  }
+  function joint(pt) { drawCircle(pt, 7, '#1a2030', 'rgba(255,255,255,0.1)'); }
+
+  // Background grid
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 1;
+  const gs = 60 * scale;
+  for (let x = cx % gs; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = cy % gs; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  ctx.restore();
+
+  // Shadow
+  const shPt = pr(0, 218, 0);
+  ctx.beginPath();
+  ctx.ellipse(shPt.x, shPt.y + 4*scale, 50*scale, 10*scale, rRad, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fill();
+
+  // Side glow when tilted
+  if (currentDir === 'LEFT') {
+    const lh = pr(-90,-60,0);
+    ctx.beginPath(); ctx.arc(lh.x, lh.y, 90*scale, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,77,109,0.06)'; ctx.fill();
+  }
+  if (currentDir === 'RIGHT') {
+    const rh = pr(90,-60,0);
+    ctx.beginPath(); ctx.arc(rh.x, rh.y, 90*scale, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(0,245,196,0.06)'; ctx.fill();
+  }
+
+  // Torso polygon
+  const tPts = [pr(...sk.shouldL), pr(...sk.shouldR), pr(...sk.hipR), pr(...sk.hipL)];
+  ctx.beginPath(); ctx.moveTo(tPts[0].x, tPts[0].y);
+  tPts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+  ctx.closePath();
+  ctx.fillStyle = bodyColor; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1.5*scale; ctx.stroke();
+
+  // Arms
+  const leftActive  = currentDir === 'LEFT';
+  const rightActive = currentDir === 'RIGHT';
+  drawLine(sk.shouldL, sk.elbowL, leftActive  ? colL : limbColor, 12);
+  drawLine(sk.elbowL,  sk.wristL, leftActive  ? colL : limbColor, 10);
+  joint(sk.elbowL); joint(sk.wristL);
+  drawLine(sk.shouldR, sk.elbowR, rightActive ? colR : limbColor, 12);
+  drawLine(sk.elbowR,  sk.wristR, rightActive ? colR : limbColor, 10);
+  joint(sk.elbowR); joint(sk.wristR);
+
+  // Legs
+  [[sk.hipL,sk.kneeL,sk.ankleL,sk.footL],[sk.hipR,sk.kneeR,sk.ankleR,sk.footR]].forEach(([h,k,a,f]) => {
+    drawLine(h,k,limbColor,14); drawLine(k,a,limbColor,12); drawLine(a,f,limbColor,8);
+    joint(k); joint(a);
+  });
+
+  // Spine
+  sk.spine.forEach((pt, i) => {
+    if (i < sk.spine.length-1) drawLine(pt, sk.spine[i+1], 'rgba(255,255,255,0.07)', 3);
+    drawCircle(pt, 4, 'rgba(255,255,255,0.1)');
+  });
+
+  // Neck + shoulder bar
+  drawLine(sk.neckTop, sk.neckBot, bodyColor, 16);
+  drawLine(sk.shouldL, sk.shouldR, '#2a3040', 16);
+
+  // Head
+  const hp = pr(...sk.headC);
+  ctx.beginPath(); ctx.arc(hp.x, hp.y, sk.headR*scale, 0, Math.PI*2);
+  ctx.fillStyle = '#2a3040'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1.5*scale; ctx.stroke();
+
+  // Eyes — face direction based on pitch
+  [-10,10].forEach(ex => {
+    const ep = pr(ex,-163,-20);
+    ctx.beginPath(); ctx.arc(ep.x, ep.y, 3.5*scale, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.fill();
+  });
+
+  // ── Sensor chip on upper back ──
+  const sp = pr(...sk.sensorPt);
+
+  // Sensor glow color matches direction
+  const sensorColors = {
+    LEFT:     '#ff4d6d',
+    RIGHT:    '#00f5c4',
+    FORWARD:  '#7b61ff',
+    BACKWARD: '#f59e0b',
+    CENTER:   '#00f5c4'
+  };
+  const sGlow = sensorColors[currentDir] || '#00f5c4';
+
+  // Board body
+  ctx.beginPath();
+  ctx.roundRect(sp.x - 14*scale, sp.y - 9*scale, 28*scale, 18*scale, 3*scale);
+  ctx.fillStyle = '#0d2b22'; ctx.fill();
+  ctx.strokeStyle = sGlow; ctx.lineWidth = 1.5*scale; ctx.stroke();
+
+  // Glow ring
+  ctx.shadowColor = sGlow; ctx.shadowBlur = 14;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // USB-C port indicator (bottom of sensor = facing down)
+  const usbY = sp.y + 9*scale;
+  ctx.beginPath();
+  ctx.roundRect(sp.x - 5*scale, usbY - 1*scale, 10*scale, 4*scale, 1*scale);
+  ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill();
+
+  // ── Direction arrows ──
+  if (currentDir === 'LEFT' || currentDir === 'RIGHT') {
+    const side = currentDir === 'RIGHT' ? 1 : -1;
+    const col  = currentDir === 'RIGHT' ? '#00f5c4' : '#ff4d6d';
+    ctx.save();
+    ctx.translate(cx + side * 155*scale, cy - 30*scale);
+    ctx.beginPath();
+    if (side < 0) {
+      ctx.moveTo(0,0); ctx.lineTo(-38*scale,0); ctx.lineTo(-26*scale,-12*scale);
+      ctx.moveTo(-38*scale,0); ctx.lineTo(-26*scale,12*scale);
+    } else {
+      ctx.moveTo(0,0); ctx.lineTo(38*scale,0); ctx.lineTo(26*scale,-12*scale);
+      ctx.moveTo(38*scale,0); ctx.lineTo(26*scale,12*scale);
+    }
+    ctx.strokeStyle = col; ctx.lineWidth = 3*scale; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.restore();
+  }
+
+  // Forward/backward pitch arrow (vertical)
+  if (currentDir === 'FORWARD' || currentDir === 'BACKWARD') {
+    const side = currentDir === 'FORWARD' ? -1 : 1;
+    const col  = currentDir === 'FORWARD' ? '#7b61ff' : '#f59e0b';
+    ctx.save();
+    ctx.translate(cx + 155*scale, cy - 60*scale);
+    ctx.beginPath();
+    if (side < 0) {
+      ctx.moveTo(0,0); ctx.lineTo(0,-38*scale); ctx.lineTo(-10*scale,-26*scale);
+      ctx.moveTo(0,-38*scale); ctx.lineTo(10*scale,-26*scale);
+    } else {
+      ctx.moveTo(0,0); ctx.lineTo(0,38*scale); ctx.lineTo(-10*scale,26*scale);
+      ctx.moveTo(0,38*scale); ctx.lineTo(10*scale,26*scale);
+    }
+    ctx.strokeStyle = col; ctx.lineWidth = 3*scale; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// Initial draw
+drawBody();
+updateCompass(0);
+</script>
+</body>
+</html>
